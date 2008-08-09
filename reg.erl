@@ -3,14 +3,14 @@
 -include_lib("eunit/include/eunit.hrl").
 
 % set_registry has to be exported, even though it's only called internally.  I don't understand...
--export([ start_registry/0, set_registry/1, start_node/1, lookup_test/0, list_test/0 ]).
+-export([ start_registry/0, set_registry/1, start_node/1 ]).
 
 
 start_registry() ->
     PID = whereis( registry ),
     if
         undefined == PID ->
-            register( registry, spawn( reg, set_registry, [ [] ] ) );
+            register( registry, spawn( reg, set_registry, [ dict:new() ] ) );
         true ->
             PID
     end.
@@ -20,34 +20,23 @@ set_registry( Nodes ) ->
     receive
         { add, Name, PID } ->
             io:format("~w adding node ~w: ~w~n", [ self(), Name, PID ]),
-            set_registry( [ { Name, PID } | Nodes ] );
+            set_registry( dict:store( Name, PID, Nodes ) );
         { lookup, Name, PID } ->
             io:format("~w got lookup request for node ~w from ~w~n", [ self(), Name, PID ]),
-            Match = find_node( Name, Nodes ),
+            {ok, Match} = dict:find( Name, Nodes ),
             PID ! { Match },
             set_registry( Nodes );
         { list_nodes, PID } ->
-            [ io:format( "Node ~w: ~w~n", [ Name, Node_PID ] ) || { Name, Node_PID } <- Nodes ],
+            NodeList = dict:to_list( Nodes ),
+            [ io:format( "Node ~w: ~w~n", [ Name, Node_PID ] ) || { Name, Node_PID } <- NodeList ],
             PID ! { Nodes },
             set_registry( Nodes );
         { clear } ->
             io:format( "~w clearing registry~n", [ self() ] ),
-            set_registry( [] );
+            set_registry( dict:new() );
         { stop } ->
             io:format( "~w exiting~n", [ self() ] )
     end.
-
-% Get the PID for the named node.
-find_node( TargetName, [] ) -> [];
-find_node( TargetName, [ { Name, PID } | Rest ] ) when TargetName == Name -> PID;
-find_node( TargetName, [ { Name, PID } | Rest ] ) -> find_node( TargetName, Rest ).
-% Unit tests for same.
-find_node_empty_test() ->
-    [] = find_node( bogus, [] ).
-find_node_mismatch_test() ->
-    [] = find_node( bogus, [ { one, "one" } ] ).
-find_node_match_test() ->
-    "matchingPID" = find_node( bogus, [ { one, "one" }, { two, "two"}, { bogus, "matchingPID" }, { three, "three" } ] ).
 
 lookup_test() ->
     start_registry(),
@@ -70,13 +59,10 @@ list_test() ->
     registry ! { add, testNodeTwo, "test node two" },
     registry ! { list_nodes, self() },
     receive
-        { [] } ->
-            io:format( "~w failed~n", [ self() ] ),
-            result = "fail";
         { Nodes } ->
             io:format( "~w got response:~n", [ self() ] ),
-            [ io:format( "Node ~w: ~w~n", [ Name, PID ] ) || { Name, PID } <- Nodes ]
-            % Nodes = [ { testNode, "test node" }, { testNodeTwo, "test node two" } ]
+            "test node" = dict:fetch( testNode, Nodes ),
+            "test node two" = dict:fetch( testNodeTwo, Nodes )
     end.
 
 start_node( Id ) ->
