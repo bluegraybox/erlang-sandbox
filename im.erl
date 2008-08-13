@@ -29,7 +29,7 @@ server_loop( ClientPIDs, PIDClients ) ->
             Client = dict:find( PID, PIDClients ),
             case Client of
                 error ->
-                    io:format( "~w no client for PID ~w~n", [ self(), PID ] ),
+                    io:format( "~w no client for PID ~w - not registered~n", [ self(), PID ] ),
                     server_loop( ClientPIDs, PIDClients );
                 { ok, Name } ->
                     CP = dict:erase( Name, ClientPIDs ),
@@ -37,32 +37,43 @@ server_loop( ClientPIDs, PIDClients ) ->
                     server_loop( CP, PC )
             end;
         { send, FromPID, ToClient, Message } ->
-            To = dict:find( ToClient, ClientPIDs ),
-            case To of
-                error ->
-                    io:format( "~w no such client ~w~n", [ self(), ToClient ] ),
-                    FromPID ! { error, string:concat( "No such client: ", atom_to_list( ToClient ) ) };
-                { ok, ToPID } ->
-                    From = dict:find( FromPID, PIDClients ),
-                    case From of
-                        error ->
-                            io:format( "~w sender not registered: ~w~n", [ self(), FromPID ] ),
-                            ToPID ! { message, FromPID, Message };
-                        { ok, FromClient } ->
-                            io:format( "~w sending message from ~w to ~s(~w): ~s~n", [ self(), FromClient, ToClient, ToPID, Message ] ),
-                            ToPID ! { message, FromClient, Message }
-                    end
-            end,
+            send_message( ClientPIDs, PIDClients, FromPID, ToClient, Message ),
             server_loop( ClientPIDs, PIDClients );
         dump ->
             io:format( "~w clients: ~s~n", [ self(), string:join( [ [ atom_to_list(K) ] || K <- dict:fetch_keys( ClientPIDs ) ], ", " ) ] ),
             im:server_loop( ClientPIDs, PIDClients );
+        { spam, FromPID, Message } ->
+            io:format( "~w spamming everyone~n", [ self() ] ),
+            Spam = fun(ToClient) -> send_message( ClientPIDs, PIDClients, FromPID, ToClient, Message ) end,
+            lists:foreach( Spam, dict:fetch_keys( ClientPIDs ) ),
+            im:server_loop( ClientPIDs, PIDClients );
         reload ->
             io:format( "~w reloading code~n", [ self() ] ),
+            Reload = fun(P) -> P ! reload end,
+            lists:foreach( Reload, dict:fetch_keys( PIDClients ) ),
             im:server_loop( ClientPIDs, PIDClients );
         Unknown ->
             io:format( "~w got unknown message ~w~n", [ self(), Unknown ] ),
             server_loop( ClientPIDs, PIDClients )
+    end.
+
+
+send_message( ClientPIDs, PIDClients, FromPID, ToClient, Message ) ->
+    To = dict:find( ToClient, ClientPIDs ),
+    case To of
+        error ->
+            io:format( "~w no such client ~w~n", [ self(), ToClient ] ),
+            FromPID ! { error, string:concat( "No such client: ", atom_to_list( ToClient ) ) };
+        { ok, ToPID } ->
+            From = dict:find( FromPID, PIDClients ),
+            case From of
+                error ->
+                    io:format( "~w sender not registered: ~w~n", [ self(), FromPID ] ),
+                    ToPID ! { message, FromPID, Message };
+                { ok, FromClient } ->
+                    io:format( "~w sending message from ~w to ~s(~w): ~s~n", [ self(), FromClient, ToClient, ToPID, Message ] ),
+                    ToPID ! { message, FromClient, Message }
+            end
     end.
 
 
@@ -86,10 +97,13 @@ client_loop( Server ) ->
             io:format( "~w got error while sending message: ~w~n", [ self(), ErrMsg ] ),
             client_loop( Server );
         { message, From, Response } ->
-            io:format( "~w got response from ~w: ~s~n", [ self(), From, Response ] ),
+            io:format( "~w got new message from ~w: ~s~n", [ self(), From, Response ] ),
             client_loop( Server );
         { send, To, Message } ->
             Server ! { send, self(), To, Message },
+            client_loop( Server );
+        { spam, Message } ->
+            Server ! { spam, self(), Message },
             client_loop( Server );
         dump ->
             io:format( "~w server: ~w~n", [ self(), Server ] ),
