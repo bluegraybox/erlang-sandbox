@@ -15,6 +15,8 @@ start_registry() ->
             PID
     end.
 
+
+% Can we make this a meta-server, so it could be configured with arbitrary message handlers?
 set_registry( Nodes ) ->
     io:format("~w registry wait loop~n", [ self() ]),
     receive
@@ -35,8 +37,23 @@ set_registry( Nodes ) ->
             io:format( "~w clearing registry~n", [ self() ] ),
             set_registry( dict:new() );
         { stop } ->
-            io:format( "~w exiting~n", [ self() ] )
+            io:format( "~w exiting~n", [ self() ] );
+        Unknown ->
+            dump_thing( Unknown ),
+            set_registry( Nodes )
     end.
+
+
+dump_thing( Thing ) ->
+    if
+        is_tuple( Thing ) ->
+            io:format( "~w unknown message ~w~n", [ self(), lists:concat( tuple_to_list( Thing ) ) ] );
+        is_list( Thing ) ->
+            io:format( "~w unknown message ~w~n", [ self(), lists:concat( Thing ) ] );
+        true ->
+            io:format( "~w unknown message ~w~n", [ self(), Thing ] )
+    end.
+
 
 lookup_test() ->
     start_registry(),
@@ -44,6 +61,7 @@ lookup_test() ->
     registry ! { add, testNode, TestNode },
     % ?assert( TestNode == registry ! { lookup, testNode, self() } ),
     registry ! { lookup, testNode, self() },
+    % FIXME: use asserts; add failure test.
     receive
         { [] } ->
             io:format( "~w failed~n", [ self() ] );
