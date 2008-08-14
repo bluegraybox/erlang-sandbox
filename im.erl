@@ -1,19 +1,14 @@
 -module(im).
 
--export([ start_server/0, spawn_server/0, server_loop/2, start_client/1, start_client/2, client_loop/1 ]).
+-export([ start_server/0, server_loop/2, start_client/1, start_client/2, client_loop/1 ]).
 
 
-spawn_server() ->
+start_server() ->
     ClientPIDs = dict:new(),
     PIDClients = dict:new(),
     ServerPID = spawn( im, server_loop, [ ClientPIDs, PIDClients ] ),
     register( im_server, ServerPID ).
 
-start_server() ->
-    ClientPIDs = dict:new(),
-    PIDClients = dict:new(),
-    register( im_server, self() ),
-    server_loop( ClientPIDs, PIDClients ).
 
 server_loop( ClientPIDs, PIDClients ) ->
     receive
@@ -48,10 +43,23 @@ server_loop( ClientPIDs, PIDClients ) ->
             lists:foreach( Spam, dict:fetch_keys( ClientPIDs ) ),
             im:server_loop( ClientPIDs, PIDClients );
         reload ->
-            io:format( "~w reloading code~n", [ self() ] ),
-            Reload = fun(P) -> P ! reload end,
-            lists:foreach( Reload, dict:fetch_keys( PIDClients ) ),
-            im:server_loop( ClientPIDs, PIDClients );
+            Purged = code:soft_purge( im ),
+            if
+                Purged ->
+                    case code:load_file( im ) of
+                        {module, Module} ->
+                            io:format( "~w reloading ~w code~n", [ self(), Module ] ),
+                            Reload = fun(P) -> P ! reload end,
+                            lists:foreach( Reload, dict:fetch_keys( PIDClients ) ),
+                            im:server_loop( ClientPIDs, PIDClients );
+                        {error, What} ->
+                            io:format( "~w failed reloading code: ~w~n", [ self(), What ] ),
+                            server_loop( ClientPIDs, PIDClients )
+                    end;
+                true ->
+                    io:format( "~w could not purge code for im~n", [ self() ] ),
+                    server_loop( ClientPIDs, PIDClients )
+            end;
         Unknown ->
             io:format( "~w got unknown message ~w~n", [ self(), Unknown ] ),
             server_loop( ClientPIDs, PIDClients )
@@ -97,7 +105,7 @@ client_loop( Server ) ->
             io:format( "~w got error while sending message: ~w~n", [ self(), ErrMsg ] ),
             client_loop( Server );
         { message, From, Response } ->
-            io:format( "~w got new message from ~w: ~s~n", [ self(), From, Response ] ),
+            io:format( "~w got new message from ~w: '~s'~n", [ self(), From, Response ] ),
             client_loop( Server );
         { send, To, Message } ->
             Server ! { send, self(), To, Message },
@@ -109,7 +117,23 @@ client_loop( Server ) ->
             io:format( "~w server: ~w~n", [ self(), Server ] ),
             client_loop( Server );
         reload ->
-            io:format( "~w reloading code~n", [ self() ] ),
-            im:client_loop( Server )
+            Purged = code:soft_purge( im ),
+            if
+                Purged ->
+                    case code:load_file( im ) of
+                        {module, Module} ->
+                            io:format( "~w reloading ~w code~n", [ self(), Module ] ),
+                            im:client_loop( Server );
+                        {error, What} ->
+                            io:format( "~w failed reloading code: ~w~n", [ self(), What ] ),
+                            client_loop( Server )
+                    end;
+                true ->
+                    io:format( "~w could not purge code for im~n", [ self() ] ),
+                    client_loop( Server )
+            end
     end.
+
+
+% UNIT TESTS!!
 
